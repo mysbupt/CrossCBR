@@ -42,11 +42,11 @@ If you want to use our codes and datasets in your research, please cite:
 
 ## How to run the code
 1. Decompress the dataset file into the current folder: 
-   '''
-      tar -zxvf dataset.tgz
-   '''
+
+   > tar -zxvf dataset.tgz
+
 4. Train CrossCBR on the dataset Youshu with GPU 0: 
-   '''
-      python train.py -g 0 -m CrossCBR -d Youshu
-   '''
+
+   > python train.py -g 0 -m CrossCBR -d Youshu
+
    You can specify the gpu id and the used dataset by cmd line arguments, while you can tune the hyper-parameters by revising the configy file [config.yaml](https://github.com/mysbupt/CrossCBR/blob/master/config.yaml). The detailed introduction of the hyper-parameters can be seen in the config file, and you are highly encouraged to read the paper to better understand the effects of some key hyper-parameters.
