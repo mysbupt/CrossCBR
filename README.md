@@ -1,9 +1,9 @@
 # CrossCBR: Cross-view Contrastive Learning for Bundle Recommendation
 This is our Pytorch implementation for the paper:
 
->Yunshan Ma, Yingzhi He, An Zhang, Xiang Wang, and Tat-Seng Chua (2022). CrossCBR: Cross-view Contrastive Learning for Bundle Recommendation.
+>Yunshan Ma, Yingzhi He, An Zhang, Xiang Wang, and Tat-Seng Chua (2022). CrossCBR: Cross-view Contrastive Learning for Bundle Recommendation, [Paper in arXiv](https://arxiv.org/pdf/2206.00242.pdf). In KDD'22, August 14–18, 2022, Washington, DC, USA.
 
-Author: Dr. Yunshan Ma (yunshan.ma at u.nus.edu)
+Author: Yunshan Ma (yunshan.ma at u.nus.edu) and Yingzhi He (heyingzhi at u.nus.edu)
 
 ## Introduction
 CrossCBR is a new recommendation model based on graph neural network and contrastive learning for bundle recommendation. By explicitly modeling the cooperative association between the item-view and bundle-view representations using an auxiliary contrastive loss, CrossCBR achieves great performance on three public bundle recommendation datasets: Youshu, NetEase, and iFashion.
@@ -26,9 +26,9 @@ If you want to use our codes and datasets in your research, please cite:
 
 ## Requirements
 * OS: Ubuntu 18.04 or higher version
-* python3.7.3
+* python == 3.7.3 or above
 * supported(tested) CUDA versions: 10.2
-* Pytorch1.8.0
+* Pytorch == 1.8.0 or above
 
 
 ## Code Structure
