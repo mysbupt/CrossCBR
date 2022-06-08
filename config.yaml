@@ -7,7 +7,7 @@ Youshu:
   
   # search hyperparameters
   # the following are the best settings
-  aug_type: "ED" # options: ED, MD, OP, ER
+  aug_type: "ED" # options: ED, MD, OP
   ed_interval: 1 # by how many epochs to dropout edge, default is 1
   embedding_sizes: [64] # the embedding size for user, bundle, and item
   num_layerss: [1] # number of layers for the infomation progagation over the item- and bundle-level graphs
