@@ -13,9 +13,9 @@ Youshu:
   num_layerss: [1] # number of layers for the infomation progagation over the item- and bundle-level graphs
 
   # the following dropout rates are with respect to the "aug_type", i.e., if aug_type is ED, the following dropout rates are for ED.
-  item_level_ratios: [0.2] # the dropout/replacement ratio for item-level graph
-  bundle_level_ratios: [0.2] # the dropout/replacement ratio for bundle-level graph
-  bundle_agg_ratios: [0.2] # the dropout/replacement ratio for bundle-item affiliation graph
+  item_level_ratios: [0.2] # the dropout ratio for item-view graph
+  bundle_level_ratios: [0.2] # the dropout ratio for bundle-view graph
+  bundle_agg_ratios: [0.2] # the dropout ratio for bundle-item affiliation graph
 
   lrs: [1.0e-3] # learning rate
   l2_regs: [1.0e-4] # the l2 regularization weight: lambda_2
@@ -24,7 +24,7 @@ Youshu:
 
   epochs: 100 # number of epochs to train
   test_interval: 5 # by how many epochs to run the validation and testing.
-  
+
 
 NetEase:
   data_path: './datasets'
@@ -32,7 +32,7 @@ NetEase:
   batch_size_test: 2048
   topk: [10, 20, 40, 80]
   neg_num: 1
-  
+
   # the following are the best settings
   aug_type: "ED"
   ed_interval: 1
@@ -43,13 +43,13 @@ NetEase:
   bundle_level_ratios: [0.3]
   bundle_agg_ratios: [0.1]
   l2_regs: [1.0e-4]
-  
+
   c_lambdas: [0.1]
   c_temps: [0.25]
 
   epochs: 50
   test_interval: 5
-  
+
 
 iFashion:
   data_path: './datasets'
@@ -57,7 +57,7 @@ iFashion:
   batch_size_test: 2048
   topk: [10, 20, 40, 80]
   neg_num: 1
-  
+
   # the following are the best settings
   aug_type: "ED"
   ed_interval: 1
@@ -68,7 +68,7 @@ iFashion:
   bundle_level_ratios: [0.2]
   bundle_agg_ratios: [0]
   l2_regs: [4.0e-5]
-  
+
   c_lambdas: [0.25]
   c_temps: [0.2]
 
