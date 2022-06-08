@@ -28,7 +28,7 @@ If you want to use our codes and datasets in your research, please cite:
 * OS: Ubuntu 18.04 or higher version
 * python == 3.7.3 or above
 * supported(tested) CUDA versions: 10.2
-* Pytorch == 1.8.0 or above
+* Pytorch == 1.9.0 or above
 
 
 ## Code Structure
