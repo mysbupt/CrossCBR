@@ -44,8 +44,10 @@ If you want to use our codes and datasets in your research, please cite:
 1. Decompress the dataset file into the current folder: 
 
    > tar -zxvf dataset.tgz
+ 
+   Noted: for the iFashion dataset, we incorporate three additional files: user\_id\_map.json, item\_id\_map.json, and bundle\_id\_map.json, which records the id mappings between the original string-based id in the POG dataset and the interger-based id in our dataset. You may use the mappings to obtain the original content information of the items/outfits. We do not use any content information in this work.
 
-4. Train CrossCBR on the dataset Youshu with GPU 0: 
+2. Train CrossCBR on the dataset Youshu with GPU 0: 
 
    > python train.py -g 0 -m CrossCBR -d Youshu
 
