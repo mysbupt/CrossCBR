@@ -97,17 +97,14 @@ class CrossCBR(nn.Module):
     def get_item_level_graph(self):
         ui_graph = self.ui_graph
         device = self.device
-        modification_ratio = 0
+        modification_ratio = self.conf["item_level_ratio"]
 
+        item_level_graph = sp.bmat([[sp.csr_matrix((ui_graph.shape[0], ui_graph.shape[0])), ui_graph], [ui_graph.T, sp.csr_matrix((ui_graph.shape[1], ui_graph.shape[1]))]])
         if modification_ratio != 0:
-            ui_graph = self.ui_graph
-            item_level_graph = sp.bmat([[sp.csr_matrix((ui_graph.shape[0], ui_graph.shape[0])), ui_graph], [ui_graph.T, sp.csr_matrix((ui_graph.shape[1], ui_graph.shape[1]))]])
             if self.conf["aug_type"] == "ED":
                 graph = item_level_graph.tocoo()
                 values = np_edge_dropout(graph.data, modification_ratio)
                 item_level_graph = sp.coo_matrix((values, (graph.row, graph.col)), shape=graph.shape).tocsr()
-        else:
-            item_level_graph = sp.bmat([[sp.csr_matrix((ui_graph.shape[0], ui_graph.shape[0])), ui_graph], [ui_graph.T, sp.csr_matrix((ui_graph.shape[1], ui_graph.shape[1]))]])
 
         self.item_level_graph = to_tensor(laplace_transform(item_level_graph)).to(device)
 
@@ -119,33 +116,25 @@ class CrossCBR(nn.Module):
         self.item_level_graph_ori = to_tensor(laplace_transform(item_level_graph)).to(device)
 
 
-    def get_bb_graph(self, bi_graph):
-        bi_norm = sp.diags(1/(np.sqrt((bi_graph.multiply(bi_graph)).sum(axis=1).A.ravel()) + 1e-8)) @ bi_graph
-        bb_graph = bi_norm @ bi_norm.T
-        return bb_graph
-
-
     def get_bundle_level_graph(self):
         ub_graph = self.ub_graph
         device = self.device
-
-        if self.conf["aug_type"] == "ED":
-            modification_ratio = self.conf["bundle_level_ratio"]
-            graph = self.ub_graph.tocoo()
-            values = graph.data
-            if self.conf["aug_type"] == "ED":
-                values = np_edge_dropout(graph.data, modification_ratio)
-
-            ub_graph = sp.coo_matrix((values, (graph.row, graph.col)), shape=graph.shape).tocsr()
+        modification_ratio = self.conf["bundle_level_ratio"]
 
         bundle_level_graph = sp.bmat([[sp.csr_matrix((ub_graph.shape[0], ub_graph.shape[0])), ub_graph], [ub_graph.T, sp.csr_matrix((ub_graph.shape[1], ub_graph.shape[1]))]])
+
+        if modification_ratio != 0:
+            if self.conf["aug_type"] == "ED":
+                graph = bundle_level_graph.tocoo()
+                values = np_edge_dropout(graph.data, modification_ratio)
+                bundle_level_graph = sp.coo_matrix((values, (graph.row, graph.col)), shape=graph.shape).tocsr()
+
         self.bundle_level_graph = to_tensor(laplace_transform(bundle_level_graph)).to(device)
 
 
     def get_bundle_level_graph_ori(self):
         ub_graph = self.ub_graph
         device = self.device
-
         bundle_level_graph = sp.bmat([[sp.csr_matrix((ub_graph.shape[0], ub_graph.shape[0])), ub_graph], [ub_graph.T, sp.csr_matrix((ub_graph.shape[1], ub_graph.shape[1]))]])
         self.bundle_level_graph_ori = to_tensor(laplace_transform(bundle_level_graph)).to(device)
 
