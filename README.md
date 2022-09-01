@@ -17,10 +17,11 @@ If you want to use our codes and datasets in your research, please cite:
                An Zhang and
                Xiang Wang and
                Tat{-}Seng Chua},
-  title     = {Cross-view Contrastive Learning for Bundle Recommendation},
-  booktitle = {KDD},
-  pages     = {},
-  year      = {2022},
+  title     = {CrossCBR: Cross-view Contrastive Learning for Bundle Recommendation},
+  booktitle = {{KDD}},
+  pages     = {1233--1241},
+  publisher = {{ACM}},
+  year      = {2022}
 }
 ```
 
