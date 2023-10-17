@@ -5,7 +5,8 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import scipy.sparse as sp 
-
+import torch_sparse
+from torch_sparse import SparseTensor
 
 def cal_bpr_loss(pred):
     # pred: [bs, 1+neg_num]
@@ -57,6 +58,8 @@ class CrossCBR(nn.Module):
         self.num_users = conf["num_users"]
         self.num_bundles = conf["num_bundles"]
         self.num_items = conf["num_items"]
+
+        
 
         self.init_emb()
 
@@ -285,3 +288,207 @@ class CrossCBR(nn.Module):
 
         scores = torch.mm(users_feature_atom, bundles_feature_atom.t()) + torch.mm(users_feature_non_atom, bundles_feature_non_atom.t())
         return scores
+
+    # The following components are from MIDGN
+    def ub_propagate(self, graph, A_feature, B_feature):
+        # node dropout on graph
+        indices = graph._indices()
+        values = graph._values()
+        values = self.node_dropout(values)
+        graph = torch.sparse.FloatTensor(
+            indices, values, size=graph.shape)
+
+        # propagate
+        features = torch.cat((A_feature, B_feature), 0)
+
+        all_features = torch.matmul(graph, features)
+        # all_features=torch.mean(all_features,dim=1,keepdims=False)
+        A_feature, B_feature = torch.split(
+            all_features, (A_feature.shape[0], B_feature.shape[0]), 0)
+        return A_feature, B_feature
+    
+    def _create_star_routing_embed_with_p(self, all_h_list, all_t_list, featureA, featureB, numA, numB, A_inshape,
+                                          n_factors=4,
+                                          pick_=False):
+        """
+        pick_ : True, the model would narrow the weight of the least important factor down to 1/args.pick_scale.
+        pick_ : False, do nothing.
+        """
+
+        '''
+        need parameter:
+        n_factor
+
+        user_embedding --> bundle_feature
+        item_embedding --> item_feature
+        self.A_in_shape
+        A:all_h_list, all_t_list
+
+        '''
+        p_test = False
+        p_train = False
+        A_indices = torch.tensor([all_h_list, all_t_list], dtype=torch.long).to(self.device)
+        D_indices_col = torch.tensor([list(range(numA)), list(range(numA))]).to(self.device)
+        D_indices_row = torch.tensor([list(range(numB)), list(range(numB))]).to(self.device)
+        A_values = torch.ones(n_factors, len(all_h_list)).to(self.device)
+
+        all_A_embeddings = [featureA]
+        all_B_embeddings = [featureB]
+        factor_num = [n_factors, n_factors, n_factors, n_factors, n_factors, n_factors]
+        iter_num = [self.n_iterations, self.n_iterations, self.n_iterations, self.n_iterations, self.n_iterations,
+                    self.n_iterations]
+        for k in range(0, self.n_layers):  # 3 layers
+            # prepare the output embedding list
+            # .... layer_embeddings stores a (n_factors)-len list of outputs derived from the last routing iterations.
+            n_factors_l = factor_num[k]  # 4 factors
+            n_iterations_l = iter_num[k]  # 2 iterations
+            A_layer_embeddings = []
+            B_layer_embeddings = []
+
+            ## Phase: spliting user/bundle and item graph into K chunks
+            # split the input embedding table
+            # .... ego_layer_embeddings is a (n_factors)-len list of embeddings [n_users+n_items, embed_size/n_factors]
+            ego_layer_A_embeddings = torch.split(featureA, int(featureA.shape[1] / n_factors_l), 1)
+            ego_layer_B_embeddings = torch.split(featureB, int(featureB.shape[1] / n_factors_l), 1)
+            # ego_layer_embeddings=[torch.cat([A, featureB], 0) for A in ego_layer_A_embeddings]
+            # perform routing mechanism
+            for t in range(0, n_iterations_l): # 2 iterations
+                A_iter_embeddings = []
+                B_iter_embeddings = []
+                A_iter_values = []
+
+                # split the adjacency values & get three lists of [n_users+n_items, n_users+n_items] sparse tensors
+                # .... A_factors is a (n_factors)-len list, each of which is an adjacency matrix
+                # .... D_col_factors is a (n_factors)-len list, each of which is a degree matrix w.r.t. columns
+                # .... D_row_factors is a (n_factors)-len list, each of which is a degree matrix w.r.t. rows
+                if t == n_iterations_l - 1:
+                    p_test = pick_
+                    p_train = False
+
+                A_factors, A_factors_t, D_col_factors, D_row_factors = self._convert_A_values_to_A_factors_with_P(
+                    n_factors_l,
+                    A_values,
+                    all_h_list,
+                    all_t_list,
+                    numA,
+                    numB,
+                    A_inshape,
+                    pick=p_train)
+
+                for i in range(0, n_factors_l): # 4 factors
+
+                    A_factor_embeddings = torch_sparse.spmm(D_indices_row, D_row_factors[i], A_inshape[1], A_inshape[1],
+                                                            ego_layer_B_embeddings[i])
+                    # Sparse matrix multply between `ego_layer_B_embeddings[i]` and `D_row_factors[i]`
+                    A_factor_embeddings = torch_sparse.spmm(A_indices, A_factors[i], A_inshape[0], A_inshape[1],
+                                                            A_factor_embeddings)
+                    # torch.sparse.mm(A_factors[i], factor_embeddings)
+
+                    A_factor_embeddings = torch_sparse.spmm(D_indices_col, D_col_factors[i], A_inshape[0], A_inshape[0],
+                                                            A_factor_embeddings)
+                    # 3 operations above represents for Equation 6 in paper
+                    A_iter_embedding = ego_layer_A_embeddings[i] + A_factor_embeddings # Equation 7
+
+                    B_factor_embeddings = torch_sparse.spmm(D_indices_col, D_col_factors[i], A_inshape[0], A_inshape[0],
+                                                            ego_layer_A_embeddings[i])
+                    B_factor_embeddings = torch_sparse.spmm(A_indices[[1, 0]], A_factors_t[i], A_inshape[1],
+                                                            A_inshape[0],
+                                                            B_factor_embeddings)  # torch.sparse.mm(A_factors[i], factor_embeddings)
+
+                    B_factor_embeddings = torch_sparse.spmm(D_indices_row, D_row_factors[i], A_inshape[1], A_inshape[1],
+                                                            B_factor_embeddings)
+                    B_iter_embedding = ego_layer_B_embeddings[i] + B_factor_embeddings
+                    # A_iter_embedding,B_iter_embedding=torch.split(factor_embeddings, [numA, numB], 0)
+                    A_iter_embeddings.append(A_iter_embedding)
+                    B_iter_embeddings.append(B_iter_embedding)
+
+                    if t == n_iterations_l - 1:
+                        A_layer_embeddings = A_iter_embeddings
+                        B_layer_embeddings = B_iter_embeddings
+                        # get the factor-wise embeddings
+                    # .... head_factor_embeddings is a dense tensor with the size of [all_h_list, embed_size/n_factors]
+                    # .... analogous to tail_factor_embeddings
+                    head_factor_embedings = A_iter_embedding[all_h_list]
+                    tail_factor_embedings = ego_layer_B_embeddings[i][all_t_list]
+
+                    # .... constrain the vector length
+                    # .... make the following attentive weights within the range of (0,1)
+                    head_factor_embedings = F.normalize(head_factor_embedings, dim=1)
+                    tail_factor_embedings = F.normalize(tail_factor_embedings, dim=1)
+
+                    # get the attentive weights
+                    # .... A_factor_values is a dense tensor with the size of [all_h_list,1]
+                    A_factor_values = torch.sum(torch.mul(head_factor_embedings, F.tanh(tail_factor_embedings)), axis=1)
+
+                    # update the attentive weights
+                    A_iter_values.append(A_factor_values)
+
+                # pack (n_factors) adjacency values into one [n_factors, all_h_list] tensor
+                A_iter_values = torch.stack(A_iter_values, 0)
+                # add all layer-wise attentive weights up.
+                A_values = A_values + A_iter_values
+
+            # sum messages of neighbors, [n_users+n_items, embed_size]
+            # side_embeddings = torch.cat(layer_embeddings, 1)
+
+            # ego_embeddings = side_embeddings
+            # concatenate outputs of all layers
+            featureA = torch.cat(A_layer_embeddings, 1)
+            featureB = torch.cat(B_layer_embeddings, 1)
+            all_A_embeddings = all_A_embeddings + [featureA]
+            all_B_embeddings = all_B_embeddings + [featureB]
+        # all_A_embeddings = torch.cat(all_A_embeddings, 1)
+        # all_B_embeddings = torch.cat(all_B_embeddings, 1)
+        all_A_embeddings = torch.stack(all_A_embeddings, 1)
+        all_A_embeddings = torch.mean(all_A_embeddings, dim=1, keepdims=False)
+        all_B_embeddings = torch.stack(all_B_embeddings, 1)
+        all_B_embeddings = torch.mean(all_B_embeddings, dim=1, keepdims=False)
+
+        return all_A_embeddings, all_B_embeddings, A_values
+
+    def _convert_A_values_to_A_factors_with_P(self, f_num, A_factor_values, all_h_list, all_t_list, numA, numB,
+                                              A_inshape, pick=False):
+        # all_h_list (indices for one end of the edges), all_t_list (indices for the other end of the edges),
+        A_factors = []
+        A_factors_t = []
+        D_col_factors = []
+        D_row_factors = []
+        all_h_list = torch.tensor(all_h_list, dtype=torch.long).to(self.device)
+        all_t_list = torch.tensor(all_t_list, dtype=torch.long).to(self.device)
+        # get the indices of adjacency matrix
+
+        A_indices = torch.stack([all_h_list, all_t_list], dim=0)
+        # print(A_indices.shape)
+
+        # apply factor-aware softmax function over the values of adjacency matrix
+        # ....A_factor_values is [n_factors, all_h_list]
+        if pick:
+            A_factor_scores = F.softmax(A_factor_values, 0)
+            min_A = torch.min(A_factor_scores, 0)
+            index = A_factor_scores > (min_A + 0.0000001)
+            index = index.type(torch.float32) * (
+                    self.pick_level - 1.0) + 1.0  # adjust the weight of the minimum factor to 1/self.pick_level
+
+            A_factor_scores = A_factor_scores * index
+            A_factor_scores = A_factor_scores / torch.sum(A_factor_scores, 0)
+        else:
+            A_factor_scores = F.softmax(A_factor_values, 0)
+
+        for i in range(0, f_num):
+            # in the i-th factor, couple the adjcency values with the adjacency indices
+            # .... A i-tensor is a sparse tensor with size of [n_users+n_items,n_users+n_items]
+            A_i_scores = A_factor_scores[i]
+            # A_i_tensor = torch.sparse_coo_tensor(A_indices, A_i_scores, A_inshape).to(self.device)
+            A_i_tensor = SparseTensor(row=all_h_list, col=all_t_list, value=A_i_scores,
+                                      sparse_sizes=(A_inshape[0], A_inshape[1]))
+            # Degree matrices are calculated for both rows and cols
+            D_i_col_scores = 1 / (torch.sqrt(A_i_tensor.sum(dim=1)) + 1e-10)
+            D_i_row_scores = 1 / (torch.sqrt(A_i_tensor.sum(dim=0)) + 1e-10)
+            _, A_i_scores_t = torch_sparse.transpose(A_indices, A_i_scores, A_inshape[0], A_inshape[1])
+            A_factors.append(A_i_scores.to(self.device))
+            A_factors_t.append(A_i_scores_t.to(self.device))
+            D_col_factors.append(D_i_col_scores)
+            D_row_factors.append(D_i_row_scores)
+
+        # return a (n_factors)-length list of laplacian matrix
+        return A_factors, A_factors_t, D_col_factors, D_row_factors
