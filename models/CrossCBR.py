@@ -81,12 +81,45 @@ class CrossCBR(nn.Module):
         self.num_layers = self.conf["num_layers"]
         self.c_temp = self.conf["c_temp"]
 
+        # Multi-intent components:
+        self.n_iterations = 2
+        self.n_factors = 4
+        self.n_layers = 3
 
+        if self.bi_graph.shape == (self.num_bundles, self.num_items):
+            tmp = self.bi_graph.tocoo()
+            self.bi_graph_h = list(tmp.row)
+            self.bi_graph_t = list(tmp.col)
+            self.bi_graph_shape = self.bi_graph.shape
+        else:
+            raise ValueError(r"raw_graph's shape is wrong")
+        
+        if self.ui_graph.shape == (self.num_users, self.num_items):
+            # add self-loop
+            tmp = self.ui_graph.tocoo()
+            self.ui_graph_v = torch.tensor(tmp.data, dtype=torch.float).to(device)
+            self.ui_graph_h = list(tmp.row)
+            self.ui_graph_t = list(tmp.col)
+            self.ui_graph_shape = self.ui_graph.shape
+        else:
+            raise ValueError(r"raw_graph's shape is wrong")
+        
+        bi_norm = sp.diags(1 / (np.sqrt((self.bi_graph.multiply(self.bi_graph)).sum(axis=1).A.ravel()) + 1e-8)) @ self.bi_graph
+        bb_graph = bi_norm @ bi_norm.T
+
+        if self.ub_graph.shape == (self.num_users, self.num_bundles) and bb_graph.shape == (self.num_bundles, self.num_bundles):
+            # add self-loop
+            non_atom_graph = sp.bmat([[sp.identity(self.ub_graph.shape[0]), self.ub_graph],
+                                        [self.ub_graph.T, bb_graph]])
+        else:
+            raise ValueError(r"raw_graph's shape is wrong")
+        self.non_atom_graph = to_tensor(laplace_transform(non_atom_graph)).to(device)
+    
     def init_md_dropouts(self):
         self.item_level_dropout = nn.Dropout(self.conf["item_level_ratio"], True)
         self.bundle_level_dropout = nn.Dropout(self.conf["bundle_level_ratio"], True)
         self.bundle_agg_dropout = nn.Dropout(self.conf["bundle_agg_ratio"], True)
-
+    
 
     def init_emb(self):
         self.users_feature = nn.Parameter(torch.FloatTensor(self.num_users, self.embedding_size))
@@ -215,8 +248,36 @@ class CrossCBR(nn.Module):
         else:
             BL_users_feature, BL_bundles_feature = self.one_propagate(self.bundle_level_graph, self.users_feature, self.bundles_feature, self.bundle_level_dropout, test)
 
-        users_feature = [IL_users_feature, BL_users_feature]
-        bundles_feature = [IL_bundles_feature, BL_bundles_feature]
+        #  ============================= Multi-intent level propagation =============================
+        
+        atom_bundles_feature, atom_item_feature, self.bi_avalues = self._create_star_routing_embed_with_p(
+            self.bi_graph_h,
+            self.bi_graph_t,
+            self.bundles_feature,
+            self.items_feature,
+            self.num_bundles,
+            self.num_items,
+            self.bi_graph_shape,
+            n_factors=1,
+            pick_=False)
+
+        atom_user_feature, atom_item_feature2, self.ui_avalues = self._create_star_routing_embed_with_p(
+            self.ui_graph_h,
+            self.ui_graph_t,
+            self.users_feature,
+            self.items_feature,
+            self.num_users,
+            self.num_items,
+            self.ui_graph_shape,
+            n_factors=self.n_factors,
+            pick_=False)
+
+
+        ML_users_feature, ML_bundles_feature = self.ub_propagate(
+            self.non_atom_graph, atom_user_feature, atom_bundles_feature)
+
+        users_feature = [IL_users_feature, BL_users_feature, ML_users_feature]
+        bundles_feature = [IL_bundles_feature, BL_bundles_feature, ML_bundles_feature]
 
         return users_feature, bundles_feature
 
@@ -243,18 +304,26 @@ class CrossCBR(nn.Module):
     def cal_loss(self, users_feature, bundles_feature):
         # IL: item_level, BL: bundle_level
         # [bs, 1, emb_size]
-        IL_users_feature, BL_users_feature = users_feature
+        IL_users_feature, BL_users_feature, ML_users_feature = users_feature
         # [bs, 1+neg_num, emb_size]
-        IL_bundles_feature, BL_bundles_feature = bundles_feature
+        IL_bundles_feature, BL_bundles_feature, ML_bundles_feature = bundles_feature
         # [bs, 1+neg_num]
-        pred = torch.sum(IL_users_feature * IL_bundles_feature, 2) + torch.sum(BL_users_feature * BL_bundles_feature, 2)
+        pred = torch.sum(IL_users_feature * IL_bundles_feature, 2) + torch.sum(BL_users_feature * BL_bundles_feature, 2) \
+                    + torch.sum(ML_users_feature * ML_bundles_feature, 2)
         bpr_loss = cal_bpr_loss(pred)
 
         # cl is abbr. of "contrastive loss"
         u_cross_view_cl = self.cal_c_loss(IL_users_feature, BL_users_feature)
         b_cross_view_cl = self.cal_c_loss(IL_bundles_feature, BL_bundles_feature)
 
-        c_losses = [u_cross_view_cl, b_cross_view_cl]
+        # add more cl loss when combining view Multi-intent
+        mi_u_cross_view_cl = self.cal_c_loss(IL_users_feature, ML_users_feature)
+        mb_u_cross_view_cl = self.cal_c_loss(BL_users_feature, ML_users_feature)
+
+        mi_b_cross_view_cl = self.cal_c_loss(IL_bundles_feature, ML_bundles_feature)
+        mb_b_cross_view_cl = self.cal_c_loss(BL_bundles_feature, ML_bundles_feature)
+
+        c_losses = [u_cross_view_cl, b_cross_view_cl, mb_b_cross_view_cl, mb_u_cross_view_cl, mi_b_cross_view_cl, mi_u_cross_view_cl]
 
         c_loss = sum(c_losses) / len(c_losses)
 
@@ -283,11 +352,13 @@ class CrossCBR(nn.Module):
 
     def evaluate(self, propagate_result, users):
         users_feature, bundles_feature = propagate_result
-        users_feature_atom, users_feature_non_atom = [i[users] for i in users_feature]
-        bundles_feature_atom, bundles_feature_non_atom = bundles_feature
+        users_feature_atom, users_feature_non_atom, users_feature_multi_intent = [i[users] for i in users_feature]
+        bundles_feature_atom, bundles_feature_non_atom, bundles_feature_multi_intent = bundles_feature
 
-        scores = torch.mm(users_feature_atom, bundles_feature_atom.t()) + torch.mm(users_feature_non_atom, bundles_feature_non_atom.t())
+        scores = torch.mm(users_feature_atom, bundles_feature_atom.t()) + torch.mm(users_feature_non_atom, bundles_feature_non_atom.t()) \
+                    + torch.mm(users_feature_multi_intent, bundles_feature_multi_intent.t())
         return scores
+
 
     # The following components are from MIDGN
     def ub_propagate(self, graph, A_feature, B_feature):
